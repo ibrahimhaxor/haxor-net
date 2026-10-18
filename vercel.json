@@ -1,8 +1,7 @@
 {
   "version": 2,
-  "routes": [
-    { "src": "/api", "dest": "/api/index.js" },
-    { "src": "/api/(.*)", "dest": "/api/$1" },
-    { "src": "/(.*)", "dest": "/api/index.js" }
-  ]
+  "functions": {
+    "api/index.js": { "maxDuration": 10 },
+    "api/log.js": { "maxDuration": 5 }
+  }
 }
