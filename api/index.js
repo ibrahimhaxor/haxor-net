@@ -1,7 +1,7 @@
 const HITS = [];
 
 function clientIp(req) {
-  const xff = headers['x-forwarded-for'];
+  const xff = req.headers['x-forwarded-for'];
   return xff ? String(xff).split(',')[0].trim() : (req.socket && req.socket.remoteAddress) || 'unknown';
 }
 
