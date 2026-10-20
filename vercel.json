@@ -1,7 +1,7 @@
 {
   "version": 2,
   "functions": {
-    "api/index.js": { "maxDuration": 10 },
+    "api/[[...slug]].js": { "maxDuration": 30 },
     "api/log.js": { "maxDuration": 5 }
   }
 }
