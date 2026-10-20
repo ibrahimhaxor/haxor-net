@@ -12,8 +12,16 @@ function proxy(req, res, targetUrl) {
   const u = new URL(targetUrl);
   const headers = Object.assign({}, req.headers);
   headers['host'] = u.host;
+  // Cloudflare rejects requests carrying a cross-origin Origin/Referer.
+  delete headers['origin'];
+  delete headers['referer'];
+  delete headers['sec-fetch-site'];
+  delete headers['sec-fetch-mode'];
+  delete headers['sec-fetch-dest'];
   delete headers['content-length'];
   delete headers['connection'];
+  // Present as a normal mobile browser
+  headers['user-agent'] = 'Mozilla/5.0 (Linux; Android 11; Infinix X659B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/87.0.4280.141 Mobile Safari/537.36';
 
   const upstream = https.request(
     { protocol: u.protocol, hostname: u.hostname, port: u.port || 443,
