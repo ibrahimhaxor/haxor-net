@@ -1,7 +1,6 @@
 {
   "version": 2,
-  "functions": {
-    "api/[[...slug]].js": { "maxDuration": 30 },
-    "api/log.js": { "maxDuration": 5 }
-  }
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api" }
+  ]
 }
